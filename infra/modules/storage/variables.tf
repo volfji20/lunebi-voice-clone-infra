@@ -40,12 +40,7 @@ variable "transition_final_days" {
   default     = 30
 }
 
-variable "cloudfront_distribution_arn" {
-  description = "ARN of the CloudFront distribution allowed to access this bucket"
-  type        = string
-}
-
-variable "iam_role" {
+variable "iam_role_name" {
   description = "IAM role ARN allowed to access this bucket"
   type        = string
 }
@@ -55,7 +50,8 @@ variable "s3_vpc_endpoint_id" {
   description = "The ID of the VPC endpoint for S3"
 }
 
-variable "iam_role_policy" {
-  type        = string
-  description = "iam_role_policy"
+variable "oac_arn" {
+  type = string
+  description = "oac_iam_arn"
+  
 }

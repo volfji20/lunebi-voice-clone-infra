@@ -53,7 +53,7 @@ resource "aws_cloudfront_cache_policy" "segments" {
 resource "aws_cloudfront_public_key" "signed_urls_key" {
   name        = "lunebi-${var.env}-public-key"
   comment     = "Public key for signed URLs"
-  encoded_key = file(var.signed_url_public_key_path)
+  encoded_key = var.signed_url_public_key
 }
 
 resource "aws_cloudfront_key_group" "signed_urls" {

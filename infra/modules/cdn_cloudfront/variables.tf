@@ -32,7 +32,7 @@ variable "api_domain" {
 # -----------------------------
 # Signed URL Public Key
 # -----------------------------
-variable "signed_url_public_key_path" {
+variable "signed_url_public_key" {
   description = "Path to public key PEM file for CloudFront signed URLs"
   type        = string
 }

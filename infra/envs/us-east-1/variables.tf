@@ -19,7 +19,7 @@ variable "region" {
 #############################################
 # IAM Role
 #############################################
-variable "iam_role" {
+variable "iam_role_name" {
   description = "IAM role ARN for app access"
   type        = string
 }
@@ -57,7 +57,7 @@ variable "api_domain" {
   type        = string
 }
 
-variable "signed_url_public_key_path" {
+variable "signed_url_public_key" {
   description = "Path to public key file for signed URLs"
   type        = string
 }
@@ -91,47 +91,27 @@ variable "private_route_table_ids" {
   type        = list(string)
 }
 
-variable "iam_role_policy" {
-  type        = string
-  description = "IAM role"
-}
 
-
-# -----------------------------
-# Lambda / API
-# -----------------------------
-variable "lambda_runtime" {
-  type        = string
-  description = "Lambda runtime"
-  default     = "nodejs18.x"
-}
-
-
-variable "jwt_authorizer_enabled" {
-  type        = bool
-  description = "Enable JWT authorizer on API Gateway routes"
-  default     = false
-}
-
+# -------------------------
+# Secrets & Config
+# -------------------------
 variable "secret_value" {
+  description = "Initial secret value for Secrets Manager (overwritten later by app/CI)"
   type        = string
-  description = "Initial secret value for application"
   default     = "changeme"
 }
 
 variable "config_value" {
+  description = "Initial JSON config string for SSM parameter"
   type        = string
-  description = "Initial configuration JSON string for SSM parameter"
   default     = "{\"feature_x\":true}"
 }
 
-
-variable "lambda_function_arn" {
-  description = "ARN of the Lambda function deployed via CI/CD"
-  type        = string
-}
-
-variable "lambda_function_name" {
-  description = "Name of the Lambda function deployed via CI/CD"
-  type        = string
+# -------------------------
+# Feature toggles
+# -------------------------
+variable "jwt_authorizer_enabled" {
+  description = "Enable JWT authorizer on API Gateway"
+  type        = bool
+  default     = false
 }

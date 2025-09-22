@@ -2,6 +2,11 @@ locals {
   prefix = "${var.project}-${var.env}-${var.region}"
 }
 
+
+data "aws_iam_role" "app_role" {
+  name = var.iam_role_name
+}
+
 data "aws_caller_identity" "current" {}
 ##################################################
 # AWS KMS KEY 
@@ -40,7 +45,7 @@ resource "aws_kms_key" "stories_key" {
         Resource = "*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = var.cloudfront_distribution_arn
+            "AWS:SourceArn" = var.oac_arn
           }
         }
       },
@@ -50,7 +55,7 @@ resource "aws_kms_key" "stories_key" {
         Sid      = "AllowIAMRoleDecryptViaVPCE"
         Effect   = "Allow"
         Principal = {
-          AWS = var.iam_role
+          AWS = data.aws_iam_role.app_role.arn
         }
         Action = [
           "kms:Decrypt",
@@ -171,14 +176,14 @@ resource "aws_s3_bucket_policy" "stories_policy" {
         Resource  = "${aws_s3_bucket.stories.arn}/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = var.cloudfront_distribution_arn
+            "AWS:SourceArn" = var.oac_arn
           }
         }
       },
       {
         Sid       = "AllowIAMRoleAccessViaVPCE"
         Effect    = "Allow"
-        Principal = { "AWS" = var.iam_role }
+        Principal = { "AWS" = data.aws_iam_role.app_role.arn }
         Action    = ["s3:GetObject","s3:PutObject"]
         Resource  = "${aws_s3_bucket.stories.arn}/*"
         Condition = {
@@ -202,7 +207,7 @@ resource "aws_s3_bucket_policy" "stories_policy" {
 ##################################################
 
 resource "aws_iam_role_policy" "app_access" {
-  role = var.iam_role_policy
+  role = var.iam_role_name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -228,8 +233,5 @@ resource "aws_iam_role_policy" "app_access" {
     aws_kms_key.stories_key
   ]
 }
-
-
-
 
 

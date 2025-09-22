@@ -8,13 +8,9 @@ region  = "eu-central-1"
 # -----------------------------
 # CDN / API Domains
 # -----------------------------
-cdn_domain = "cdn.lunebi.com"
-api_domain = "api.lunebi.com"
+cdn_domain = "cdn.eu.lunebi.com"
+api_domain = "api.eu.lunebi.com"
 
-# -----------------------------
-# Signed URLs
-# -----------------------------
-signed_url_public_key_path = "/home/linux/Pictures/infra/envs/public_key.pem"
 
 # -----------------------------
 # ACM Certificates (CDN + API)
@@ -30,7 +26,7 @@ existing_cdn_distribution_id = "E1T7A0PP1OXWZJ"
 # -----------------------------
 # IAM / Storage Settings
 # -----------------------------
-iam_role        = "arn:aws:iam::579897422848:role/service-role/lunebi-runtime-prop-role-icyzcr3p"
+iam_role_name = "lunebi-runtime-prop-role-oqc7t7tz"    
 
 expire_segments_days  = 7
 transition_final_days = 90
@@ -42,6 +38,9 @@ vpc_id                  = "vpc-0d8cdaa4129d84cfc"
 private_route_table_ids = ["rtb-0f0357dcf4dbdba06"]
 
 stories_bucket_name="voiceclone-stories-prod-eu-central-1"
-iam_role_policy = "lunebi-runtime-prop-role-oqc7t7tz"
 
 
+secret_value          = "super-secret-value"
+config_value          = "{\"feature_x\":true, \"feature_y\":false}"
+
+jwt_authorizer_enabled = false

@@ -31,7 +31,7 @@ module "cdn_cloudfront" {
   cdn_domain                 = var.cdn_domain
   api_domain                 = var.api_domain
 
-  signed_url_public_key_path = abspath(var.signed_url_public_key_path)
+  signed_url_public_key = var.signed_url_public_key
 
   # ACM certs (validation only, not attached)
   cdn_cert_arn = var.cdn_cert_arn
@@ -58,21 +58,18 @@ module "storage" {
   env     = var.env
   region  = var.region
 
-  iam_role = var.iam_role
 
   expire_segments_days  = var.expire_segments_days
   transition_final_days = var.transition_final_days
   stories_bucket_name   = var.stories_bucket_name
 
-  cloudfront_distribution_arn = module.cdn_cloudfront.cloudfront_distribution_arn
   # Pass VPC Endpoint from network module
   s3_vpc_endpoint_id = module.network.s3_vpc_endpoint_id
 
-  iam_role_policy = var.iam_role_policy
+  iam_role_name = var.iam_role_name
+  oac_arn = module.cdn_cloudfront.oac_arn
 
 }
-
-
 
 
 # -----------------------------
@@ -89,4 +86,25 @@ module "network" {
 
 
 
+# -----------------------------
+# API (Lambda + API Gateway)
+# -----------------------------
+module "api_lambda" {
+  source = "../../modules/api_lambda"
+
+  # Core naming
+  project = var.project
+  env     = var.env
+  region  = var.region
+
+
+  # Secrets & Config
+  secret_value = var.secret_value
+  config_value = var.config_value
+
+  # Feature toggle
+  jwt_authorizer_enabled = var.jwt_authorizer_enabled
+
+  api_cert_arn = var.api_cert_arn
+}
 

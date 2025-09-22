@@ -57,7 +57,7 @@ variable "api_domain" {
   type        = string
 }
 
-variable "signed_url_public_key_path" {
+variable "signed_url_public_key" {
   description = "Path to public key file for signed URLs"
   type        = string
 }
@@ -94,4 +94,29 @@ variable "private_route_table_ids" {
 variable "iam_role_policy" {
   type        = string
   description = "IAM role"
+}
+
+
+# -------------------------
+# Secrets & Config
+# -------------------------
+variable "secret_value" {
+  description = "Initial secret value for Secrets Manager (overwritten later by app/CI)"
+  type        = string
+  default     = "changeme"
+}
+
+variable "config_value" {
+  description = "Initial JSON config string for SSM parameter"
+  type        = string
+  default     = "{\"feature_x\":true}"
+}
+
+# -------------------------
+# Feature toggles
+# -------------------------
+variable "jwt_authorizer_enabled" {
+  description = "Enable JWT authorizer on API Gateway"
+  type        = bool
+  default     = false
 }

@@ -17,17 +17,27 @@ output "api_cert_status" {
   value = data.aws_acm_certificate.api.status
 }
 
-# cdn/outputs.tf
-output "oac_id" {
-  value = aws_cloudfront_origin_access_control.s3_oac.id
-}
 
 output "oac_name" {
   value = aws_cloudfront_origin_access_control.s3_oac.name
 }
 
-output "cloudfront_distribution_arn" {
-  description = "ARN of the CloudFront distribution"
-  value       = aws_cloudfront_distribution.stories.arn
+# -----------------------------
+# CloudFront / OAC Outputs
+# -----------------------------
+output "distribution_id" {
+  description = "CloudFront Distribution ID for stories"
+  value       = aws_cloudfront_distribution.stories.id
 }
+
+output "distribution_domain_name" {
+  description = "CloudFront Distribution Domain Name for stories"
+  value       = aws_cloudfront_distribution.stories.domain_name
+}
+
+output "oac_arn" {
+  description = "IAM ARN of the CloudFront Origin Access Control (OAC)"
+  value       = aws_cloudfront_origin_access_control.s3_oac.arn
+}
+
 
