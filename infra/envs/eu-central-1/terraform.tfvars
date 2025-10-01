@@ -31,12 +31,6 @@ iam_role_name = "lunebi-runtime-prop-role-oqc7t7tz"
 expire_segments_days  = 7
 transition_final_days = 90
 
-# -----------------------------
-# Networking (VPC Endpoints)
-# -----------------------------
-vpc_id                  = "vpc-0d8cdaa4129d84cfc"
-private_route_table_ids = ["rtb-0f0357dcf4dbdba06"]
-
 stories_bucket_name="voiceclone-stories-prod-eu-central-1"
 
 

@@ -78,19 +78,6 @@ variable "existing_cdn_distribution_id" {
   default     = null
 }
 
-#############################################
-# Networking (VPC + Endpoints)
-#############################################
-variable "vpc_id" {
-  description = "ID of the VPC"
-  type        = string
-}
-
-variable "private_route_table_ids" {
-  description = "List of private route table IDs for VPC endpoints"
-  type        = list(string)
-}
-
 
 # -------------------------
 # Secrets & Config
@@ -115,3 +102,18 @@ variable "jwt_authorizer_enabled" {
   type        = bool
   default     = false
 }
+
+# -----------------------------
+# JWT Auth variables
+# -----------------------------
+variable "jwt_issuer" {
+  description = "JWT issuer (e.g., Cognito User Pool URL or mock JWKS URL)"
+  type        = string
+}
+variable "jwt_audience" {
+  description = "JWT audience for API Gateway authorizer"
+  type        = string
+  default     = ""  # optional if you want to make it optional
+}
+
+

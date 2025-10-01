@@ -19,7 +19,7 @@ variable "region" {
 #############################################
 # IAM Role
 #############################################
-variable "iam_role" {
+variable "iam_role_name" {
   description = "IAM role ARN for app access"
   type        = string
 }
@@ -78,24 +78,6 @@ variable "existing_cdn_distribution_id" {
   default     = null
 }
 
-#############################################
-# Networking (VPC + Endpoints)
-#############################################
-variable "vpc_id" {
-  description = "ID of the VPC"
-  type        = string
-}
-
-variable "private_route_table_ids" {
-  description = "List of private route table IDs for VPC endpoints"
-  type        = list(string)
-}
-
-variable "iam_role_policy" {
-  type        = string
-  description = "IAM role"
-}
-
 
 # -------------------------
 # Secrets & Config
@@ -120,3 +102,29 @@ variable "jwt_authorizer_enabled" {
   type        = bool
   default     = false
 }
+
+# -----------------------------
+# JWT Auth variables
+# -----------------------------
+variable "jwt_issuer" {
+  description = "JWT issuer (e.g., Cognito User Pool URL or mock JWKS URL)"
+  type        = string
+}
+variable "jwt_audience" {
+  description = "JWT audience for API Gateway authorizer"
+  type        = string
+  default     = ""  # optional if you want to make it optional
+}
+
+variable "JWKS" {
+  type        = string
+  description = "JWKS base64url"
+  default     = "" # empty locally
+}
+
+variable "jwt_private_key" {
+  description = "RSA private key (PEM). Provide via TF_VAR_jwt_private_key or var file. Sensitive."
+  type        = string
+  sensitive   = true
+}
+

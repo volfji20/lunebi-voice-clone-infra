@@ -1,53 +1,52 @@
-name: Deploy Lambda
+name: Lambda CI/CD
 
 on:
+  pull_request:
+    branches: [main]
+    paths: ["lambda/**"]
   push:
-    branches:
-      - main
-    paths:
-      - "lambda/**"  # Only trigger if code in lambda/ changes
+    branches: [main]
+ 
 
 jobs:
-  deploy-lambda:
+  lint-and-test:
     runs-on: ubuntu-latest
-
     steps:
-      # 1. Checkout code
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      # 2. Setup Node.js (optional, only if your Lambda uses Node dependencies)
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: '20'  # change to your Node runtime
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r lambda/requirements.txt
+      - run: |
+          pip install flake8 pytest
+          flake8 lambda  # ✅ M2: Lint on PRs
+          python -q lambda/test_app.py  # ✅ M2: Unit tests on PRs
 
-      # 3. Install dependencies (if you have package.json)
-      - name: Install dependencies
-        working-directory: lambda
-        run: |
-          if [ -f package.json ]; then
-            npm install --production
-          fi
-
-      # 4. Zip Lambda code
-      - name: Zip Lambda code
-        working-directory: lambda
-        run: zip -r ../lambda.zip . -x "*.git*" "*.DS_Store"
-
-      # 5. Configure AWS credentials
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+  deploy:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install -r lambda/requirements.txt --target ./lambda/package  # ✅ M2: Pinned dependencies
+      - run: |
+          cd lambda/package
+          zip -r9 ../../lambda.zip .  # ✅ M2: Zipped artifacts
+          cd ..
+          zip -g ../lambda.zip app.py
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-
-      # 6. Update Lambda function
-      - name: Deploy Lambda
-        run: |
+      - run: |
           aws lambda update-function-code \
             --function-name lunebi-prod-us-east-1-lambda \
             --zip-file fileb://lambda.zip \
             --publish
-

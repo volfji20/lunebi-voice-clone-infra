@@ -34,11 +34,6 @@ iam_role_name        = "lunebi-runtime-prop-role-oqc7t7tz"
 expire_segments_days  = 7
 transition_final_days = 90
 
-# -----------------------------
-# Networking (VPC Endpoints)
-# -----------------------------
-vpc_id                  = "vpc-080495782db2236df"
-private_route_table_ids = ["rtb-04114d15afeed5a95"]
 
 stories_bucket_name="voiceclone-stories-prod-us-east-1"
 
@@ -51,3 +46,5 @@ config_value = "some-config-value"
 # Features
 jwt_authorizer_enabled = false
 
+jwt_issuer   = "https://mock.lunebi.dev"
+jwt_audience = "https://api.lunebi.com"

@@ -72,19 +72,17 @@ module "storage" {
 }
 
 
-# -----------------------------
-# Networking (VPC Endpoints)
-# -----------------------------
 module "network" {
-  source                  = "../../modules/network"
-  project                 = var.project
-  env                     = var.env
-  region                  = var.region
-  vpc_id                  = var.vpc_id
-  private_route_table_ids = var.private_route_table_ids
+  source = "../../modules/network"
+
+  project                  = var.project
+  env                      = var.env
+  region                   = var.region
+  vpc_cidr                 = "10.0.0.0/16"
+  public_subnet_cidr       = "10.0.1.0/24"
+  private_subnet_cidr      = "10.0.2.0/24"
+  availability_zone        = var.region
 }
-
-
 
 # -----------------------------
 # API (Lambda + API Gateway)
@@ -97,7 +95,6 @@ module "api_lambda" {
   env     = var.env
   region  = var.region
 
-
   # Secrets & Config
   secret_value = var.secret_value
   config_value = var.config_value
@@ -105,6 +102,39 @@ module "api_lambda" {
   # Feature toggle
   jwt_authorizer_enabled = var.jwt_authorizer_enabled
 
+  # Custom domain certificate
   api_cert_arn = var.api_cert_arn
+
+  # Networking (pass these from your environment)
+  private_subnets = module.network.private_subnets
+  lambda_sg_id   = module.network.lambda_sg_id
+
+  # JWT Authorizer config (required when enabled)
+  jwt_issuer   = var.jwt_issuer
+
+  sqs_queue_arn = module.queuing.sqs_queue_arn
+  voices_table_arn = module.ddb.voices_table_arn
+
+  stories_table_arn = module.ddb.stories_table_arn
+  s3Bucket_arn = module.storage.stories_bucket_arn
+  domain_name = var.api_domain
+  jwt_private_key = "" 
+  JWKS            = ""
+
 }
 
+module "ddb" {
+  source  = "../../modules/ddb"
+
+  project = var.project
+  env     = var.env
+  region  = var.region
+}
+
+module "queuing" {
+  source  = "../../modules/queuing"
+
+  project = var.project
+  env     = var.env
+  region  = var.region
+}
