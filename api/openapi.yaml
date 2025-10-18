@@ -1,0 +1,370 @@
+openapi: 3.0.0
+info:
+  title: Lunebi Voice Cloning API
+  description: Production API for voice cloning and instant story streaming - Milestone 2
+  version: 1.0.0
+  contact:
+    name: Lunebi API Team
+    url: https://lunebi.com
+  license:
+    name: Proprietary
+    url: https://lunebi.com/terms
+
+servers:
+  - url: https://api.lunebi.com
+    description: Production server (US East)
+
+paths:
+  /voices/enroll:
+    post:
+      summary: Enroll a new voice
+      description: Submit audio for voice cloning and receive a voice_id. Audio is processed immediately and discarded - only embeddings are stored.
+      operationId: enrollVoice
+      tags:
+        - Voices
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio, consent]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: Audio file (WAV/MP3, max 20MB)
+                consent:
+                  type: boolean
+                  description: Explicit user consent required
+                  example: true
+      responses:
+        '201':
+          description: Voice enrolled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceEnrollResponse'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /voices/delete:
+    post:
+      summary: Delete a voice
+      description: Permanently delete voice embeddings and metadata (hard delete)
+      operationId: deleteVoice
+      tags:
+        - Voices
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [voice_id]
+              properties:
+                voice_id:
+                  type: string
+                  format: uuid
+                  description: ID of the voice to delete
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '202':
+          description: Voice deletion accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /stories/prepare:
+    post:
+      summary: Prepare a new story
+      description: Initialize story streaming and receive HLS URL for instant playback
+      operationId: prepareStory
+      tags:
+        - Stories
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [voice_id]
+              properties:
+                voice_id:
+                  type: string
+                  format: uuid
+                  description: ID of the voice to use for synthesis
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                language:
+                  type: string
+                  description: Language code for synthesis
+                  default: "en-US"
+                  example: "en-US"
+                format:
+                  type: string
+                  description: Audio output format
+                  enum: [aac, opus, mp3]
+                  default: "aac"
+                  example: "aac"
+      responses:
+        '201':
+          description: Story prepared successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoryPrepareResponse'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /stories/{id}:
+    post:
+      summary: Append text to story
+      description: Add more text to an ongoing story stream
+      operationId: appendStory
+      tags:
+        - Stories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Story ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  description: Text to synthesize (max 5000 characters)
+                  maxLength: 5000
+                  example: "The quick brown fox jumps over the lazy dog."
+      responses:
+        '202':
+          description: Text append accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /stories/{id}/status:
+    get:
+      summary: Get story status
+      description: Check progress of story generation and playback status
+      operationId: getStoryStatus
+      tags:
+        - Stories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Story ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Story status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoryStatusResponse'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Bearer token from Cognito User Pool
+
+  headers:
+    RequestId:
+      description: Unique request identifier for tracing
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    VoiceEnrollResponse:
+      type: object
+      properties:
+        voice_id:
+          type: string
+          format: uuid
+          description: Unique identifier for the enrolled voice
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier for tracing
+          example: "abc12345-6789-0123-4567-890123456789"
+
+    StoryPrepareResponse:
+      type: object
+      properties:
+        story_id:
+          type: string
+          format: uuid
+          description: Unique identifier for the story
+          example: "223e4567-e89b-12d3-a456-426614174000"
+        hls_url:
+          type: string
+          format: uri
+          description: HLS playlist URL for streaming
+          example: "https://cdn.lunebi.com/stories/223e4567-e89b-12d3-a456-426614174000/playlist.m3u8"
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier for tracing
+          example: "abc12345-6789-0123-4567-890123456789"
+
+    StoryStatusResponse:
+      type: object
+      properties:
+        progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Story generation progress percentage
+          example: 45
+        playing:
+          type: boolean
+          description: Whether the story is currently playing
+          example: true
+        ready_for_download:
+          type: boolean
+          description: Whether the final story is ready for download
+          example: false
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier for tracing
+          example: "abc12345-6789-0123-4567-890123456789"
+
+    SuccessResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          description: Operation success status
+          example: true
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier for tracing
+          example: "abc12345-6789-0123-4567-890123456789"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+          example: "invalid_json"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid JSON in request body"
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier for tracing
+          example: "abc12345-6789-0123-4567-890123456789"
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized - invalid or missing authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: Request payload too large
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

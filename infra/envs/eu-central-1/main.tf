@@ -120,9 +120,9 @@ module "api_lambda" {
 
   stories_table_arn = module.ddb.stories_table_arn
   s3Bucket_arn = module.storage.stories_bucket_arn
-  JWKS = var.JWKS
+  JWKS = ""
   domain_name = var.api_domain
-  jwt_private_key = var.jwt_private_key
+  jwt_private_key = ""
 
 }
 

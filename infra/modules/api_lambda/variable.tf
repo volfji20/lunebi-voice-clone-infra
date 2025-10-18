@@ -116,3 +116,37 @@ variable "jwt_private_key" {
   type        = string
   sensitive   = true
 }
+
+variable "ddb_kms_key_arn" {
+  description = "ARN of the KMS key for encryption"
+  type        = string
+}
+
+# =============================================================================
+# MILESTONE 3 BACKEND SERVICE VARIABLES
+# =============================================================================
+
+variable "voices_table_name" {
+  description = "Name of the DynamoDB table for voice enrollments"
+  type        = string
+}
+
+variable "stories_table_name" {
+  description = "Name of the DynamoDB table for story metadata" 
+  type        = string
+}
+
+variable "sqs_queue_url" {
+  description = "URL of the SQS queue for story tasks"
+  type        = string
+}
+
+variable "s3_bucket_name" {
+  description = "Name of the S3 bucket for story playlists and audio segments"
+  type        = string
+}
+variable "stories_kms_key_arn" {
+  
+  description = "kms key"
+  type = string
+}

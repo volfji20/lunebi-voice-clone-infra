@@ -55,5 +55,6 @@ jobs:
           aws-region: us-east-1
       - run: terraform init
       - run: terraform apply -auto-approve
+
         env:
           TF_VAR_signed_url_public_key: ${{ secrets.PUBLIC_KEY }}

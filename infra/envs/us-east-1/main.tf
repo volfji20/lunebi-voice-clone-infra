@@ -112,7 +112,7 @@ module "api_lambda" {
   # JWT Authorizer config (required when enabled)
   jwt_issuer   = var.jwt_issuer
 
-  sqs_queue_arn = module.queuing.sqs_queue_arn
+  sqs_queue_arn = module.queuing.queue_arn
   voices_table_arn = module.ddb.voices_table_arn
 
   stories_table_arn = module.ddb.stories_table_arn
@@ -120,21 +120,91 @@ module "api_lambda" {
   domain_name = var.api_domain
   jwt_private_key = "" 
   JWKS            = ""
+  ddb_kms_key_arn = module.ddb.kms_key_arn
+  s3_bucket_name = var.stories_bucket_name
+  sqs_queue_url = module.queuing.queue_url
+  stories_table_name = module.ddb.stories_table_name
+  voices_table_name = module.ddb.voices_table_name
+  stories_kms_key_arn = module.storage.stories_kms_key_arn
 
-}
-
-module "ddb" {
-  source  = "../../modules/ddb"
-
-  project = var.project
-  env     = var.env
-  region  = var.region
 }
 
 module "queuing" {
-  source  = "../../modules/queuing"
-
-  project = var.project
-  env     = var.env
-  region  = var.region
+  source = "../../modules/queuing"
+  
+  prefix                 = "${var.project}-${var.env}-${var.region}"
+  mode                   = var.mode
+  long_poll_seconds      = var.queue_long_poll_seconds
+  max_receive_count      = var.queue_max_receive_count
+  message_retention_days = 4
+  dlq_retention_days     = 14
+  region                 = var.region
+  
+  # Observability
+  warning_alarm_actions  = []
+  critical_alarm_actions = []
+  
+  # IAM Role ARNs for SQS policy
+  api_lambda_role_arn    = module.api_lambda.lambda_role_arn
+  gpu_worker_role_arn    = module.ddb.gpu_worker_role_arn
+  cpu_mock_role_arn      = var.enable_cpu_mock_consumer ? module.ddb.cpu_mock_role_arn : ""
+  
+  tags = {
+    Project     = var.project
+    Environment = var.env
+    Region      = var.region
+    Module      = "queuing"
+  }
 }
+
+# -----------------------------
+# DynamoDB (Tables + IAM roles)
+# -----------------------------
+module "ddb" {
+  source = "../../modules/ddb"
+
+  prefix          = "${var.project}-${var.env}-${var.region}"
+  project         = var.project
+  env             = var.env
+  stories_ttl_days = var.stories_ttl_days
+  kms_key_arn     = null  # Let DDB module create its own KMS key
+  region          = var.region
+  
+  # Observability - pass empty for now, will be connected later
+  critical_alarm_actions = []
+  
+  # IAM role dependencies
+  sqs_queue_arn    = module.queuing.queue_arn
+  stories_bucket_arn = module.storage.stories_bucket_arn
+  enable_cpu_mock  = var.enable_cpu_mock_consumer
+
+  tags = {
+    Project     = var.project
+    Environment = var.env
+    Region      = var.region
+    Module      = "dynamodb"
+  }
+}
+# CPU Mock Consumer Module (Test Mode only)
+module "compute_gpu" {
+  count = var.enable_cpu_mock_consumer ? 1 : 0
+  
+  source = "../../modules/compute_gpu"
+
+  prefix              = "${var.project}-${var.env}-${var.region}"
+  sqs_queue_url       = module.queuing.queue_url
+  stories_table_name  = module.ddb.stories_table_name
+  cpu_mock_role_arn   = module.ddb.cpu_mock_role_arn
+  mock_min_ms         = 300
+  mock_max_ms         = 800
+  sqs_queue_arn = module.queuing.queue_arn
+
+  tags = {
+    Project     = var.project
+    Environment = var.env
+    Region      = var.region
+    Module      = "cpu_mock"
+  }
+}
+
+#home

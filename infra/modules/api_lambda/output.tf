@@ -23,3 +23,20 @@ output "config_parameter_name" {
   description = "Name of the SSM parameter for app config"
   value       = aws_ssm_parameter.config.name
 }
+
+
+# In your api_lambda module (modules/api_lambda/outputs.tf)
+output "lambda_role_arn" {
+  description = "ARN of the Lambda execution role"
+  value       = aws_iam_role.lambda_exec.arn
+}
+
+output "lambda_function_name" {
+  description = "Name of the Lambda function"
+  value       = aws_lambda_function.app.function_name
+}
+
+output "lambda_function_arn" {
+  description = "ARN of the Lambda function"
+  value       = aws_lambda_function.app.arn
+}

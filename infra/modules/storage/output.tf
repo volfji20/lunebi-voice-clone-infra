@@ -12,3 +12,8 @@ output "stories_bucket_domain_name" {
   description = "Domain name of the stories bucket"
   value       = aws_s3_bucket.stories.bucket_regional_domain_name
 }
+
+output "stories_kms_key_arn" {
+  description = "ARN of the KMS key used for S3 encryption"
+  value       = aws_kms_key.stories_key.arn
+}

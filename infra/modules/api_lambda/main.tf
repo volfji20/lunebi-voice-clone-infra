@@ -2,6 +2,124 @@ locals {
   prefix = "${var.project}-${var.env}-${var.region}"
 }
 
+resource "aws_cognito_user_pool" "main" {
+  name = "${local.prefix}-user-pool"
+  
+  # Email as username
+  username_attributes = ["email"]
+  auto_verified_attributes = ["email"]
+  
+  # Password policy
+  password_policy {
+    minimum_length    = 8
+    require_lowercase = true
+    require_numbers   = true
+    require_symbols   = true
+    require_uppercase = true
+  }
+
+  username_configuration {
+    case_sensitive = false
+  }
+    schema {
+    name                = "custom_scopes"
+    attribute_data_type = "String"
+    mutable             = true
+    required            = false
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 1000
+    }
+  }
+}
+
+resource "aws_cognito_resource_server" "lunebi_api" {
+  identifier   = "lunebi-api"  
+  name         = "Lunebi API"
+  user_pool_id = aws_cognito_user_pool.main.id
+
+  scope {
+    scope_name        = "voices:enroll"
+    scope_description = "Enroll voice"
+  }
+
+  scope {
+    scope_name        = "voices:delete"
+    scope_description = "Delete voice"
+  }
+
+  scope {
+    scope_name        = "stories:prepare"
+    scope_description = "Prepare story"
+  }
+
+  scope {
+    scope_name        = "stories:append"
+    scope_description = "Append story"
+  }
+
+  scope {
+    scope_name        = "stories:status:read"
+    scope_description = "Read story status"
+  }
+  depends_on = [aws_cognito_user_pool.main]
+}
+
+# -----------------------------
+# Cognito Domain for OAuth2
+# -----------------------------
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = "${var.project}-${var.env}"  
+  user_pool_id = aws_cognito_user_pool.main.id
+}
+
+resource "aws_cognito_user_pool_client" "api_client" {
+  name            = "${local.prefix}-api-client"
+  user_pool_id    = aws_cognito_user_pool.main.id
+  generate_secret = true
+  
+  # ✅ CRITICAL: Use authorization_code grant for proper aud claim
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_scopes = [
+    "openid",
+    "email",
+    "profile",
+    "lunebi-api/voices:enroll",
+    "lunebi-api/voices:delete", 
+    "lunebi-api/stories:prepare",
+    "lunebi-api/stories:append",
+    "lunebi-api/stories:status:read"
+  ]
+
+  allowed_oauth_flows = ["code", "implicit"]
+  
+  
+  # ✅ CRITICAL: Callback URLs required for authorization_code flow
+  callback_urls = [
+    "https://app.lunebi.com/callback",
+    "http://localhost:3000/callback"  # for development
+  ]
+  
+  # ✅ CRITICAL: Supported identity providers
+  supported_identity_providers = ["COGNITO"]
+  
+  # Token configuration
+  access_token_validity  = 1  # 1 hour
+  id_token_validity      = 1  # 1 hour
+  refresh_token_validity = 30 # 30 days
+
+  # Explicit auth flows
+  explicit_auth_flows = [
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_SRP_AUTH", 
+    "ALLOW_CUSTOM_AUTH",
+    "ALLOW_USER_PASSWORD_AUTH"
+  ]
+
+  # Security
+  prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
+}
 
 # -----------------------------
 # API Gateway (HTTP API)
@@ -19,38 +137,77 @@ resource "aws_apigatewayv2_api" "http" {
 
 
 # -----------------------------
-# Routes with Scopes
+# Routes with Scopes and Authorization
 # -----------------------------
+resource "aws_apigatewayv2_authorizer" "jwt" {
+  api_id           = aws_apigatewayv2_api.http.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${local.prefix}-jwt-authorizer"
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.api_client.id]
+    issuer   = "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.main.id}"
+  }
+
+  # Wait for Cognito to be fully created
+  depends_on = [aws_cognito_user_pool.main]
+}
+
 resource "aws_apigatewayv2_route" "voices_enroll" {
-  api_id               = aws_apigatewayv2_api.http.id
-  route_key            = "POST /voices/enroll"
-  target               = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /voices/enroll"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  
+  # Add authorization scopes - FIXED with colons
+  authorization_scopes = var.env == "prod" ? ["lunebi-api/voices:enroll"] : null
 }
 
 resource "aws_apigatewayv2_route" "voices_delete" {
-  api_id               = aws_apigatewayv2_api.http.id
-  route_key            = "POST /voices/delete"
-  target               = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /voices/delete"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorization_type = "JWT" 
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  
+  # FIXED with colon
+  authorization_scopes = var.env == "prod" ? ["lunebi-api/voices:delete"] : null
 }
 
 resource "aws_apigatewayv2_route" "stories_prepare" {
-  api_id               = aws_apigatewayv2_api.http.id
-  route_key            = "POST /stories/prepare"
-  target               = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /stories/prepare"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorization_type = "JWT"  
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id 
+  
+  # FIXED with colon
+  authorization_scopes = var.env == "prod" ? ["lunebi-api/stories:prepare"] : null
 }
 
 resource "aws_apigatewayv2_route" "stories_append" {
-  api_id               = aws_apigatewayv2_api.http.id
-  route_key            = "POST /stories/{id}"
-  target               = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /stories/{id}"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorization_type = "JWT"  
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id  
+  
+  # FIXED with colon
+  authorization_scopes = var.env == "prod" ? ["lunebi-api/stories:append"] : null
 }
 
 resource "aws_apigatewayv2_route" "stories_status" {
-  api_id               = aws_apigatewayv2_api.http.id
-  route_key            = "GET /stories/{id}/status"
-  target               = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /stories/{id}/status"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorization_type = "JWT"  
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id 
+  
+  # FIXED with colon
+  authorization_scopes = var.env == "prod" ? ["lunebi-api/stories:status:read"] : null
 }
-
 
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id                 = aws_apigatewayv2_api.http.id
@@ -157,34 +314,33 @@ resource "aws_ssm_parameter" "config" {
   value = var.config_value
 }
 
-# -----------------------------
-# IAM Policy for Lambda (read secret + config)
-# -----------------------------
+resource "aws_ssm_parameter" "enable_backend_wiring" {
+  name  = "/${local.prefix}/ENABLE_BACKEND_WIRING"
+  type  = "String"
+  value = "false"  # M2 is mocked
+}
+
+resource "aws_ssm_parameter" "enable_auth" {
+  name  = "/${local.prefix}/ENABLE_AUTH" 
+  type  = "String"
+  value = "true"
+}
+
+# IAM Policy for Lambda 
 data "aws_iam_policy_document" "lambda_read" {
-  # SSM Parameter
-  statement {
-    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
-    resources = [aws_ssm_parameter.config.arn]
-  }
-
-  # Secrets Manager (App secret)
-  statement {
-    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = [aws_secretsmanager_secret.app_secret.arn]
-  }
-
-  # SQS (enqueue requests)
+  # SQS: SendMessage only (to main queue)
   statement {
     actions   = ["sqs:SendMessage"]
     resources = [var.sqs_queue_arn]
   }
 
-  # DynamoDB (voices + stories)
+  # DynamoDB: Get, Put, Update on both tables
   statement {
     actions = [
+      "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
-      "dynamodb:GetItem"
+      "dynamodb:DeleteItem"
     ]
     resources = [
       var.voices_table_arn,
@@ -192,12 +348,39 @@ data "aws_iam_policy_document" "lambda_read" {
     ]
   }
 
-  # S3 (playlist skeletons)
+  # S3: PutObject for playlist skeletons only
   statement {
     actions   = ["s3:PutObject"]
-    resources = ["${var.s3Bucket_arn}/*"]
+    resources = ["${var.s3Bucket_arn}/stories/*/playlist.m3u8"]
+  }
+  
+  # KMS: For S3 operations
+statement {
+  actions = [
+    "kms:Decrypt",
+    "kms:GenerateDataKey",
+    "kms:GenerateDataKeyWithoutPlaintext"
+  ]
+  resources = [var.stories_kms_key_arn]  # Direct reference
+}
+
+  # KMS: Encrypt/Decrypt for DynamoDB
+  statement {
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [var.ddb_kms_key_arn]
   }
 
+  # SSM Parameter (existing)
+  statement {
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = [aws_ssm_parameter.config.arn]
+  }
+
+  # Secrets Manager (existing)
+  statement {
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = [aws_secretsmanager_secret.app_secret.arn]
+  }
 }
 
 
@@ -224,19 +407,39 @@ resource "aws_lambda_function" "app" {
   filename         = "${path.module}/bootstrap.zip"
   source_code_hash = filebase64sha256("${path.module}/bootstrap.zip")
 
-  # ✅ M2 Non-Functional Defaults
+
   timeout     = 10      # 10s timeout
   memory_size = 512     # 512 MB memory
   ephemeral_storage {
     size = 512         # 512 MB ephemeral storage
   }
 
-  # ✅ FIXED - Remove merge() function
   environment {
     variables = {
       CONFIG_PARAM          = aws_ssm_parameter.config.name
       SECRET_ARN            = aws_secretsmanager_secret.app_secret.arn
-      ENABLE_BACKEND_WIRING = var.env != "dev" ? "true" : "false"
+      ENABLE_BACKEND_WIRING = "true"
+      ENABLE_AUTH           = "true"
+
+      VOICES_TABLE_NAME  = var.voices_table_name
+      STORIES_TABLE_NAME = var.stories_table_name
+      SQS_QUEUE_URL      = var.sqs_queue_url
+      S3_BUCKET_NAME     = var.s3_bucket_name
+      
+      # JWT Configuration - Conditional based on environment
+      JWT_ISSUER    = var.env == "prod" ? "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.main.id}" : "https://mock-issuer.lunebi.com"
+      # Instead of a single static string, allow multiple client IDs (future-proof)
+      JWT_ALLOWED_CLIENT_IDS = aws_cognito_user_pool_client.api_client.id
+
+      JWT_ALGORITHM = "RS256"
+      
+      # Cognito Configuration
+      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.main.id
+      COGNITO_USER_POOL_CLIENT_ID = aws_cognito_user_pool_client.api_client.id
+      COGNITO_REGION              = var.region
+      
+      # Development JWKS
+      JWKS_SECRET_ARN = var.env == "dev" ? aws_secretsmanager_secret.mock_jwks[0].arn : ""
     }
   }
 
@@ -249,7 +452,9 @@ resource "aws_lambda_function" "app" {
   depends_on = [
     aws_iam_role_policy_attachment.lambda_basic_exec,
     aws_iam_role_policy_attachment.lambda_insights_exec,
-    aws_iam_role_policy_attachment.attach_lambda_read
+    aws_iam_role_policy_attachment.attach_lambda_read,
+    aws_cognito_user_pool.main,      
+    aws_cognito_user_pool_client.api_client,
   ]
 }
 
@@ -271,11 +476,10 @@ resource "aws_cloudwatch_log_group" "api_gw" {
   name              = "/aws/apigateway/${aws_apigatewayv2_api.http.id}"
   retention_in_days = 30
 
-
 }
 
 # -----------------------------
-# CloudWatch Alarms (optional but useful)
+# CloudWatch Alarms 
 # -----------------------------
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   alarm_name          = "${local.prefix}-lambda-errors"
@@ -379,43 +583,67 @@ resource "aws_cloudwatch_dashboard" "api_dashboard" {
   })
 }
 
-# # Private key (for signing test tokens in dev tools)
-# resource "aws_secretsmanager_secret" "jwt_private" {
-#   count = var.env == "dev" ? 1 : 0
-#   name  = "${local.prefix}-jwt-private"
-# }
 
-# resource "aws_secretsmanager_secret_version" "jwt_private_ver" {
-#   count        = var.env == "dev" ? 1 : 0
-#   secret_id    = aws_secretsmanager_secret.jwt_private[0].id
-#   secret_string = var.jwt_private_key
-# }
+# =============================================================================
+# ADDITIONAL IAM PERMISSIONS FOR COGNITO & SECRETS
+# =============================================================================
+data "aws_iam_policy_document" "lambda_cognito_access" {
+  # Cognito permissions
+  statement {
+    actions = [
+      "cognito-idp:DescribeUserPool",
+      "cognito-idp:DescribeUserPoolClient"
+    ]
+    resources = [
+      aws_cognito_user_pool.main.arn,
+      "${aws_cognito_user_pool.main.arn}/client/*"
+    ]
+  }
+  
+  # Secrets Manager permissions for JWKS (dev only) - FIXED
+  dynamic "statement" {
+    for_each = var.env == "dev" ? [1] : []
+    content {
+      actions = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.mock_jwks[0].arn]
+      # REMOVED: jwt_private_key reference since it doesn't exist
+    }
+  }
+}
 
-# # JWKS (public key set)
-# resource "aws_secretsmanager_secret" "mock_jwks" {
-#   count = var.env == "dev" ? 1 : 0 
-#   name  = "${local.prefix}-jwks"
-# }
+resource "aws_iam_policy" "lambda_cognito_access" {
+  name        = "${local.prefix}-lambda-cognito-access"
+  description = "Allow Lambda to access Cognito and JWKS secrets"
+  policy      = data.aws_iam_policy_document.lambda_cognito_access.json
+}
 
-# resource "aws_secretsmanager_secret_version" "mock_jwks_v" {
-#   count = var.env == "dev" ? 1 : 0 
-#   secret_id = aws_secretsmanager_secret.mock_jwks[0].id
-#   secret_string = jsonencode({
-#     keys = [
-#       {
-#         kty = "RSA"
-#         kid = "2025-09-dev"
-#         use = "sig"
-#         alg = "RS256"
-#         n   = var.JWKS
-#         e   = "AQAB"
-#       }
-#     ]
-#   })
-# }
+resource "aws_iam_role_policy_attachment" "lambda_cognito_access" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = aws_iam_policy.lambda_cognito_access.arn
+}
+# =============================================================================
+# FIXED MOCK JWKS (Use generated RSA key instead of variable)
+# =============================================================================
+resource "aws_secretsmanager_secret" "mock_jwks" {
+  count       = var.env == "dev" ? 1 : 0 
+  name        = "${local.prefix}-jwks"
+  description = "JWKS public keys for JWT validation in development"
+}
 
-
-
-
-
-
+resource "aws_secretsmanager_secret_version" "mock_jwks_v" {
+  count = var.env == "dev" ? 1 : 0 
+  secret_id = aws_secretsmanager_secret.mock_jwks[0].id
+  
+  secret_string = jsonencode({
+    keys = [
+      {
+        kty = "RSA"
+        kid = "2025-09-dev"
+        use = "sig"
+        alg = "RS256"
+        n   = var.JWKS
+        e   = "AQAB"
+      }
+    ]
+  })
+}

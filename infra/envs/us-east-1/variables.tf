@@ -117,3 +117,54 @@ variable "jwt_audience" {
 }
 
 
+variable "long_poll_seconds" {
+  description = "SQS long polling duration in seconds"
+  type        = number
+  default     = 20
+}
+
+variable "max_receive_count" {
+  description = "Max receive attempts before moving to DLQ"
+  type        = number
+  default     = 5
+}
+
+variable "mode" {
+  description = "Operation mode: test or prod"
+  type        = string
+  default     = "test"
+  validation {
+    condition     = contains(["test", "prod"], var.mode)
+    error_message = "Mode must be either 'test' or 'prod'."
+  }
+}
+
+variable "stories_ttl_days" {
+  description = "TTL for stories table in days"
+  type        = number
+  default     = 30
+}
+
+variable "queue_long_poll_seconds" {
+  description = "SQS long polling duration in seconds"
+  type        = number
+  default     = 20
+}
+
+variable "queue_max_receive_count" {
+  description = "Max receive attempts before moving to DLQ"
+  type        = number
+  default     = 5
+}
+
+variable "enable_cpu_mock_consumer" {
+  description = "Whether to enable CPU mock consumer (Test Mode)"
+  type        = bool
+  default     = true
+}
+
+variable "alarm_email" {
+  description = "Email for CloudWatch alarm notifications"
+  type        = string
+  default     = null
+}

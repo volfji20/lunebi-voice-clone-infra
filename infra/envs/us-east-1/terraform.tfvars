@@ -47,4 +47,7 @@ config_value = "some-config-value"
 jwt_authorizer_enabled = false
 
 jwt_issuer   = "https://mock.lunebi.dev"
-jwt_audience = "https://api.lunebi.com"
+
+
+long_poll_seconds     = 20
+max_receive_count     = 5
