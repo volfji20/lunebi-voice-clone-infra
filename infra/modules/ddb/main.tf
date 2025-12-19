@@ -94,7 +94,7 @@ resource "aws_dynamodb_table" "stories" {
 
 # GPU Worker Role - Defined now, used in M4
 resource "aws_iam_role" "gpu_worker" {
-  name = "${var.prefix}-gpu-worker"
+  name = "${var.prefix}-gpu-worker-profile"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -362,4 +362,56 @@ resource "aws_cloudwatch_dashboard" "dynamodb_metrics" {
       }
     ]
   })
+}
+
+# SSM Parameter for stories table name
+resource "aws_ssm_parameter" "stories_table" {
+  name  = "/${var.prefix}/stories_table"
+  type  = "String"
+  value = aws_dynamodb_table.stories.name
+  
+  tags = var.tags
+}
+
+# SSM Parameter for voices table name
+resource "aws_ssm_parameter" "voices_table" {
+  name  = "/${var.prefix}/voices_table"
+  type  = "String"
+  value = aws_dynamodb_table.voices.name
+  
+  tags = var.tags
+}
+
+# SSM Parameter for KMS key ARN used for DynamoDB encryption
+resource "aws_ssm_parameter" "dynamodb_kms_key_arn" {
+  name  = "/${var.prefix}/dynamodb_kms_key_arn"
+  type  = "String"
+  value = local.kms_key_arn
+  
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_managed" {
+  role       = aws_iam_role.gpu_worker.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "s3_full" {
+  role       = aws_iam_role.gpu_worker.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "sqs_full" {
+  role       = aws_iam_role.gpu_worker.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "dynamodb_full" {
+  role       = aws_iam_role.gpu_worker.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_logs" {
+  role       = aws_iam_role.gpu_worker.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
 }

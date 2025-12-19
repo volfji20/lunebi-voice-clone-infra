@@ -13,8 +13,16 @@ data "aws_ssm_parameter" "p95_sentence_synth" {
 }
 
 locals {
-  p95_sentence_synth_seconds = 500 / 1000
-  visibility_timeout_seconds = max(30, ceil(2 * local.p95_sentence_synth_seconds))
+  p95_sentence_synth_seconds = tonumber(data.aws_ssm_parameter.p95_sentence_synth.value) / 1000
+  visibility_timeout_seconds = max(30, ceil(2 * local.p95_sentence_synth_seconds)) + 5
+}
+
+resource "aws_ssm_parameter" "queue_url" {
+  name  = "/${var.prefix}/queue_url"
+  type  = "String"
+  value = aws_sqs_queue.story_tasks.url
+  
+  tags = var.tags
 }
 
 # Dead Letter Queue
@@ -210,23 +218,156 @@ resource "aws_sqs_queue_policy" "story_tasks" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "AllowAllInAccount"
         Effect = "Allow"
         Principal = {
-          AWS = compact([
-            var.api_lambda_role_arn,    # For API Lambda to send messages
-            var.gpu_worker_role_arn,    # For GPU workers to receive messages
-            var.cpu_mock_role_arn       # For CPU mock to receive messages
-          ])
+          AWS = "*"
         }
         Action = [
-          "sqs:SendMessage",           # API Lambda needs this
-          "sqs:ReceiveMessage",        # Workers need this  
-          "sqs:DeleteMessage",         # Workers need this
-          "sqs:GetQueueAttributes",    # Workers need this
-          "sqs:ChangeMessageVisibility" # Workers need this
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
         ]
         Resource = aws_sqs_queue.story_tasks.arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       }
     ]
   })
+}
+
+data "aws_caller_identity" "current" {}
+
+
+
+# Enhanced CloudWatch Alarms for Production
+resource "aws_cloudwatch_metric_alarm" "ttfa_p95_high" {
+  count = var.mode == "prod" ? 1 : 0
+
+  alarm_name          = "${var.prefix}-ttfa-p95-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 5     
+  threshold           = 1500 
+  
+  metric_query {
+    id = "m1"
+    metric {
+      metric_name = "TTFAMilliseconds" 
+      namespace   = "Lunebi/Stories"    
+      period      = 60
+      stat        = "p95"
+      dimensions = {
+        AutoScalingGroupName = var.gpu_asg_name
+      }
+    }
+    return_data = true
+  }
+  
+  alarm_description = "TTFA p95 exceeds 1.5s over 5 minutes"
+  alarm_actions     = var.critical_alarm_actions
+  
+  tags = var.tags
+}
+
+
+# OldestMessageAge > 10s Alarm (matches blueprint)
+resource "aws_cloudwatch_metric_alarm" "sqs_oldest_message_age_high" {
+  count = var.mode == "prod" ? 1 : 0
+
+  alarm_name          = "${var.prefix}-sqs-oldest-message-age-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = "60"
+  statistic           = "Average"
+  threshold           = "10"          # > 10 seconds (matches blueprint)
+  alarm_description   = "SQS oldest message age exceeds 10 seconds"
+  alarm_actions       = var.critical_alarm_actions
+
+  dimensions = {
+    QueueName = split("/", aws_sqs_queue.story_tasks.url)[4]
+  }
+
+  tags = var.tags
+}
+
+# ----------------------------------------------------------------
+# GPU Metric Alarms (Utilization & VRAM)
+# ----------------------------------------------------------------
+
+# GPU Utilization Alarm (> 90% for 2 minutes) - FIXED with correct metric name
+resource "aws_cloudwatch_metric_alarm" "gpu_utilization_high" {
+  count = var.mode == "prod" ? 1 : 0
+
+  alarm_name          = "${var.prefix}-gpu-utilization-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2  # 2 minutes total (2 periods × 60s)
+  metric_name         = "utilization_gpu"  # ✅ CORRECT: From NVIDIA agent
+  namespace           = "CWAgent"          # ✅ CORRECT: CloudWatch Agent namespace
+  period              = 60                 # 60-second periods
+  statistic           = "Average"
+  threshold           = 90                 # > 90% utilization
+  alarm_description   = "GPU utilization exceeds 90% for 2 minutes"
+  alarm_actions       = var.critical_alarm_actions
+
+  dimensions = {
+    AutoScalingGroupName = var.gpu_asg_name
+  }
+
+  tags = var.tags
+}
+
+# API 5xx Errors Alarm (placeholder - requires API Gateway)
+resource "aws_cloudwatch_metric_alarm" "api_5xx_percentage_high" {
+  count = var.mode == "prod" && var.api_gateway_id != null ? 1 : 0
+
+  alarm_name          = "${var.prefix}-api-5xx-percentage-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  threshold           = "1"  # ✅ 1% threshold
+  
+  # Metric math to calculate percentage
+  metric_query {
+    id = "errors"
+    metric {
+      metric_name = "5XXError"  # Note: AWS uses 5XXError (uppercase XX)
+      namespace   = "AWS/ApiGateway"
+      period      = 300
+      stat        = "Sum"
+      dimensions  = {
+        ApiName = var.api_gateway_id
+      }
+    }
+  }
+  
+  metric_query {
+    id = "requests"
+    metric {
+      metric_name = "Count"
+      namespace   = "AWS/ApiGateway"
+      period      = 300
+      stat        = "Sum"
+      dimensions  = {
+        ApiName = var.api_gateway_id
+      }
+    }
+  }
+  
+  metric_query {
+    id          = "error_percentage"
+    expression  = "(errors / requests) * 100"
+    label       = "5xx Error Percentage"
+    return_data = true
+  }
+  
+  alarm_description = "API 5xx error rate exceeds 1%"
+  alarm_actions     = var.critical_alarm_actions
+  
+  tags = var.tags
 }

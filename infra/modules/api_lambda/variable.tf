@@ -64,18 +64,6 @@ variable "api_cert_arn" {
   type        = string
 }
 
-# -------------------------
-# VPC Inputs
-# -------------------------
-variable "private_subnets" {
-  description = "List of private subnet IDs for Lambda VPC config"
-  type        = list(string)
-}
-
-variable "lambda_sg_id" {
-  description = "Security Group ID to associate with the Lambda function"
-  type        = string
-}
 
 variable "sqs_queue_arn" {
   description = "Sqs queue"

@@ -1,60 +1,597 @@
-name: Terraform CI/CD
+name: Terraform CI/CD 
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
+    paths: ["infra/**", "worker/**"]
   pull_request:
     branches: [main]
-    paths: ["infra/**"]
+    paths: ["infra/**", "worker/**"]
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        type: choice
+        description: 'Target environment'
+        options: [test, production]
+        required: true
+        default: 'test'
+      build_new_ami:
+        type: boolean
+        description: 'Build new AMI'
+        required: false
+        default: false
+      build_ecr_image:
+        type: choice
+        description: 'ECR Image Strategy'
+        options: ['skip_if_exists', 'always_build', 'force_rebuild']
+        required: true
+        default: 'skip_if_exists'
+      run_smoke_tests:
+        type: boolean
+        description: 'Run smoke tests (enroll→prepare→append→status + CPU mock)'
+        required: false
+        default: false
+      scale_gpu_for_tests:
+        type: boolean
+        description: 'Scale GPU desired>0 for validation (Test Mode only)'
+        required: false
+        default: false
 
 env:
   TF_VERSION: "1.9.8"
+  AWS_REGION: "us-east-1"
 
 jobs:
-  terraform-plan-us:
-    name: "Plan - US East 1"
+  
+  # STAGE 1: Build worker image (ECR) & AMI bake (Packer) with immutable tag
+  build-images:
+    name: "🔨 Stage 1: Build Images"
     runs-on: ubuntu-latest
+    
+    outputs:
+      ami_id: ${{ steps.set-outputs.outputs.ami_id }}
+      image_tag: ${{ steps.set-outputs.outputs.image_tag }}
+      ecr_image_uri: ${{ steps.set-outputs.outputs.ecr_image_uri }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate immutable tag
+        id: generate-tag
+        run: |
+          SHORT_SHA=${GITHUB_SHA:0:8}
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          IMAGE_TAG="${SHORT_SHA}-${TIMESTAMP}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Get latest existing AMI
+        id: get-existing-ami
+        run: |
+          echo "🔍 Finding latest existing AMI..."
+          
+          # Try multiple possible patterns
+          PATTERNS=("voiceclone-worker-test-*" "voiceclone-gpu-worker-*" "voiceclone-worker-*" "voiceclone-*")
+          LATEST_AMI=""
+          
+          for PATTERN in "${PATTERNS[@]}"; do
+            echo "Trying pattern: $PATTERN"
+            AMI_ID=$(aws ec2 describe-images \
+              --owners self \
+              --filters "Name=name,Values=$PATTERN" "Name=state,Values=available" \
+              --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+              --output text 2>/dev/null || true)
+            
+            echo "Debug: Raw AMI_ID = '$AMI_ID'"
+            
+            # Check if AMI_ID is valid
+            if [ -n "$AMI_ID" ] && [ "$AMI_ID" != "None" ] && [[ "$AMI_ID" =~ ^ami- ]]; then
+              LATEST_AMI="$AMI_ID"
+              echo "✅ Found AMI with pattern: $PATTERN"
+              
+              # Get AMI name
+              AMI_NAME=$(aws ec2 describe-images \
+                --image-ids $LATEST_AMI \
+                --query 'Images[0].Name' \
+                --output text 2>/dev/null || echo "unknown")
+              
+              echo "📸 AMI ID: ${LATEST_AMI}"
+              echo "🏷️ AMI Name: ${AMI_NAME}"
+              break
+            fi
+          done
+          
+          if [ -z "$LATEST_AMI" ]; then
+            echo "⚠️ No existing AMI found with any pattern."
+            echo "existing_ami_id=none" >> $GITHUB_OUTPUT
+          else
+            echo "existing_ami_id=${LATEST_AMI}" >> $GITHUB_OUTPUT
+          fi
+      # STRATEGY 2: Build new AMI
+      - name: Bake new AMI with Packer
+        id: bake-ami
+        if: inputs.build_new_ami == true
+        run: |
+          echo "🍞 Building NEW AMI strategy..."
+          cd worker/packer
+          packer init worker-ami.pkr.hcl
+          packer build \
+            -var "aws_region=${{ env.AWS_REGION }}" \
+            -var "image_version=${{ steps.generate-tag.outputs.image_tag }}" \
+            worker-ami.pkr.hcl
+          
+          # Extract new AMI ID
+          NEW_AMI=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
+          echo "new_ami_id=${NEW_AMI}" >> $GITHUB_OUTPUT
+          echo "🆕 New AMI baked: ${NEW_AMI}"
+
+      # ✅ ADD THIS STEP - Set outputs properly
+      - name: Set outputs
+        id: set-outputs
+        run: |
+          # Use existing AMI or new AMI if built
+          if [ -n "${{ steps.bake-ami.outputs.new_ami_id }}" ]; then
+            echo "ami_id=${{ steps.bake-ami.outputs.new_ami_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "ami_id=${{ steps.get-existing-ami.outputs.existing_ami_id }}" >> $GITHUB_OUTPUT
+          fi
+          echo "image_tag=${{ steps.generate-tag.outputs.image_tag }}" >> $GITHUB_OUTPUT
+          echo "ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/voiceclone-worker:${{ steps.generate-tag.outputs.image_tag }}" >> $GITHUB_OUTPUT
+          
+
+      - name: Check if ANY voiceclone-worker images exist
+        id: check-ecr-images
+        run: |
+          echo "🔍 Checking if ANY voiceclone-worker images exist in ECR..."
+          
+          # Check if repository has any images at all
+          if aws ecr list-images --repository-name voiceclone-worker --max-items 1 &> /dev/null; then
+            echo "ecr_images_exist=true" >> $GITHUB_OUTPUT
+            IMAGE_COUNT=$(aws ecr list-images --repository-name voiceclone-worker --query 'imageIds | length(@)' --output text)
+            echo "✅ Found $IMAGE_COUNT voiceclone-worker images in ECR"
+          else
+            echo "ecr_images_exist=false" >> $GITHUB_OUTPUT
+            echo "📦 No voiceclone-worker images found in ECR - will build"
+          fi
+
+      - name: Create ECR repository if missing
+        run: |
+          echo "🔧 Ensuring voiceclone-worker ECR repository exists..."
+          if ! aws ecr describe-repositories --repository-names voiceclone-worker &> /dev/null; then
+            aws ecr create-repository \
+              --repository-name voiceclone-worker \
+              --image-tag-mutability IMMUTABLE \
+              --image-scanning-configuration scanOnPush=true
+            echo "✅ voiceclone-worker ECR repository created"
+          else
+            echo "✅ voiceclone-worker ECR repository exists"
+          fi
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        if: steps.check-ecr-images.outputs.ecr_images_exist == 'false'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push ECR image
+        if: steps.check-ecr-images.outputs.ecr_images_exist == 'false'
+        run: |
+          cd worker
+          echo "🏗️ Building new voiceclone-worker image..."
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/voiceclone-worker:${{ steps.generate-tag.outputs.image_tag }} .
+          docker push ${{ steps.login-ecr.outputs.registry }}/voiceclone-worker:${{ steps.generate-tag.outputs.image_tag }}
+          echo "✅ voiceclone-worker image built and pushed"
+
+      - name: Skip ECR build - images exist
+        if: steps.check-ecr-images.outputs.ecr_images_exist == 'true'
+        run: |
+          echo "⏭️ SKIPPING ECR BUILD"
+          echo "📦 voiceclone-worker images already exist in ECR"
+          echo "💡 Using existing images - no rebuild needed"
+
+  # STAGE 2: Terraform plan (both modes supported via variables)
+  terraform-plan:
+    name: "📋 Stage 2: Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: build-images
+    
+    strategy:
+      matrix:
+        environment: [test, production]
+        include:
+          - environment: test
+            mode: test
+            gpu_min: 0
+            gpu_desired: 0
+            spot_only: true
+          - environment: production
+            mode: prod
+            gpu_min: 1
+            gpu_desired: 2
+            spot_only: false
+      max-parallel: 1 
+
     defaults:
       run:
         working-directory: infra/envs/us-east-1
+      
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-      - uses: aws-actions/configure-aws-credentials@v4
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-      - run: terraform init
-      - run: terraform plan
-        env:
-          TF_VAR_signed_url_public_key: ${{ secrets.PUBLIC_KEY }}
 
-  terraform-apply-us:
-    name: "Apply - US East 1"
+      - name: Debug AMI from build job
+        run: |
+          echo "🔍 FROM BUILD JOB:"
+          echo "AMI ID: ${{ needs.build-images.outputs.ami_id }}"
+          echo "Image Tag: ${{ needs.build-images.outputs.image_tag }}"
+          echo "ECR URI: ${{ needs.build-images.outputs.ecr_image_uri }}"
+          
+      - name: Terraform Init
+        run: terraform init -input=false -backend-config="bucket=lunebi-prod-us-east-1-tfstate"
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="mode=${{ matrix.mode }}" \
+            -var="gpu_worker_ami_id=${{ needs.build-images.outputs.ami_id }}" \
+            -var="gpu_worker_version=${{ needs.build-images.outputs.image_tag }}" \
+            -var="gpu_asg_min=${{ matrix.gpu_min }}" \
+            -var="gpu_asg_desired=${{ matrix.gpu_desired }}" \
+            -var="signed_url_public_key=${{ secrets.PUBLIC_KEY }}" \
+            -var="gpu_use_spot_only=${{ matrix.spot_only }}" \
+            -out="tfplan-${{ matrix.environment }}" \
+            -input=false
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: infra/envs/us-east-1/tfplan-${{ matrix.environment }}
+          retention-days: 1
+
+  # STAGE 3: Deploy to test (Spot-only, desired=0)
+  deploy-test:
+    name: "🧪 Stage 3: Deploy to TEST"
     runs-on: ubuntu-latest
-    needs: [terraform-plan-us]
-    if: github.ref == 'refs/heads/main'
+    needs: [terraform-plan]
+    
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target_environment == 'test')
+    
+    environment:
+      name: test
+
+    defaults:
+      run:
+        working-directory: infra/envs/us-east-1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-test
+          path: infra/envs/us-east-1/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init -input=false -backend-config="bucket=lunebi-prod-us-east-1-tfstate"
+
+      - name: Terraform Apply (Test Mode)
+        run: |
+          terraform apply -input=false -auto-approve tfplan-test
+          echo "✅ TEST deployment completed - GPU workers at desired=0"
+
+
+  # STAGE 4: Optional prod deploy with approval
+  deploy-production:
+    name: "🚀 Stage 4: Deploy to PRODUCTION"
+    runs-on: ubuntu-latest
+    needs: [terraform-plan]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target_environment == 'production')
+    
     environment:
       name: production
-      url: https://api.lunebi.com
+
+    # ✅ ADD THIS (same as test environment)
     defaults:
       run:
         working-directory: infra/envs/us-east-1
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Wait for manual approval
+        uses: trstringer/manual-approval@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
-      - uses: aws-actions/configure-aws-credentials@v4
+          secret: ${{ github.token }}
+          approvers: ${{ secrets.PRODUCTION_APPROVERS }}
+          minimum-approvals: 1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}  # ✅ Add version
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-      - run: terraform init
-      - run: terraform apply -auto-approve
 
+      - name: Terraform Apply (Production)
+        run: |
+          terraform apply -input=false -auto-approve tfplan-production
+          echo "✅ PRODUCTION deployment completed"
+
+  # STAGE 5: Manual Smoke Tests Only
+  smoke-tests:
+    name: "🧪 Stage 5: Smoke Tests (Manual)"
+    runs-on: ubuntu-latest
+    needs: 
+      - deploy-test
+    
+    # FIXED: Proper condition syntax
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_smoke_tests == 'true' }}
+    
+    strategy:
+      matrix:
+        environment: [test]
+    
+    environment:
+      name: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3
+
+      - name: Determine test mode
+        id: test-mode
+        run: |
+          if [ "${{ matrix.environment }}" == "test" ]; then
+            echo "mode=test" >> $GITHUB_OUTPUT
+          else
+            echo "mode=full" >> $GITHUB_OUTPUT
+          fi
+          echo "🔧 Running smoke tests in ${{ matrix.environment }} mode: $(cat $GITHUB_OUTPUT)"
+
+      - name: Run Smoke Tests
+        id: run-smoke-tests
         env:
-          TF_VAR_signed_url_public_key: ${{ secrets.PUBLIC_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "🚀 Starting Smoke Tests for ${{ matrix.environment }} environment..."
+          python scripts/smoke_test.py --mode ${{ steps.test-mode.outputs.mode }} --region ${{ env.AWS_REGION }}
+
+      - name: Handle test results
+        if: always()
+        run: |
+          echo "📊 Smoke Tests Completed for ${{ matrix.environment }}"
+          echo "Test Exit Code: ${{ steps.run-smoke-tests.outcome }}"
+          
+          if [ "${{ steps.run-smoke-tests.outcome }}" == "success" ]; then
+            echo "🎉 All smoke tests passed for ${{ matrix.environment }}!"
+          else
+            echo "💥 Some smoke tests failed for ${{ matrix.environment }}"
+            # Don't fail the workflow for test failures in test environment
+            if [ "${{ matrix.environment }}" == "test" ]; then
+              echo "⚠️  Test environment smoke test failures are warnings"
+            else
+              echo "❌ Production environment smoke test failures are critical"
+              exit 1
+            fi
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results-${{ matrix.environment }}-${{ github.sha }}
+          path: |
+            smoke-test.log
+          retention-days: 30
+
+  # STAGE 6: GPU Validation Window (Manual Only)
+  gpu-validation-window:
+    name: "🚀 Stage 6: GPU Validation Window"
+    runs-on: ubuntu-latest
+    
+    # FIXED: Remove dependency on smoke-tests and fix condition
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_gpu_validation == 'true' }}
+    
+    environment:
+      name: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3
+
+      - name: Run GPU Validation Tests
+        id: gpu-tests
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "🚀 Starting GPU Validation Window Tests..."
+          echo "📈 Scaling GPU workers to 1 and running comprehensive tests..."
+          python scripts/smoke_test.py --mode gpu --region ${{ env.AWS_REGION }}
+
+      - name: GPU Test Results
+        if: always()
+        run: |
+          if [ "${{ steps.gpu-tests.outcome }}" == "success" ]; then
+            echo "🎉 GPU validation tests passed! Real HLS segments and playlist verified."
+          else
+            echo "❌ GPU validation tests failed. Check GPU worker logs and HLS output."
+            exit 1
+          fi
+
+      - name: Upload GPU test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-validation-results-${{ github.sha }}
+          path: |
+            smoke-test.log
+          retention-days: 30
+
+  # STAGE 7: Final Summary (Updated for manual tests)
+  deployment-summary:
+    name: "📊 Stage 7: Deployment Summary"
+    runs-on: ubuntu-latest
+    needs: 
+      - deploy-test
+      - smoke-tests
+    if: always()
+
+    steps:
+      - name: Summary
+        run: |
+          echo "🎯 DEPLOYMENT SUMMARY"
+          echo "===================="
+          echo "Test Deployment: ${{ needs.deploy-test.result }}"
+          echo "Production Deployment: ${{ needs.deploy-production.result }}"
+          echo "Smoke Tests: ${{ needs.smoke-tests.result }}"
+          echo ""
+          
+          if [ "${{ needs.deploy-test.result }}" == "success" ]; then
+            echo "✅ TEST ENVIRONMENT: Deployed"
+            if [ "${{ needs.smoke-tests.result }}" == "success" ]; then
+              echo "   🧪 Smoke Tests: PASSED"
+            elif [ "${{ needs.smoke-tests.result }}" == "skipped" ]; then
+              echo "   ⏭️  Smoke Tests: SKIPPED (run manually to validate)"
+            else
+              echo "   ❌ Smoke Tests: FAILED"
+            fi
+          else
+            echo "❌ TEST ENVIRONMENT: Deployment failed"
+          fi
+          
+          if [ "${{ needs.deploy-production.result }}" == "success" ]; then
+            echo "✅ PRODUCTION ENVIRONMENT: Deployed" 
+            if [ "${{ needs.smoke-tests.result }}" == "success" ]; then
+              echo "   🧪 Smoke Tests: PASSED"
+            elif [ "${{ needs.smoke-tests.result }}" == "skipped" ]; then
+              echo "   ⏭️  Smoke Tests: SKIPPED (run manually to validate)"
+            else
+              echo "   ❌ Smoke Tests: FAILED"
+            fi
+          else
+            echo "❌ PRODUCTION ENVIRONMENT: Deployment failed"
+          fi
+          
+          echo ""
+          echo "Next steps:"
+          echo "- Run smoke tests manually to validate system health"
+          echo "- Run GPU validation for comprehensive HLS testing"
+          echo "- Monitor CloudWatch metrics for system health"
+
+      - name: Create deployment summary comment
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const testDeploy = '${{ needs.deploy-test.result }}';
+            const prodDeploy = '${{ needs.deploy-production.result }}';
+            const smokeTests = '${{ needs.smoke-tests.result }}';
+            
+            let summary = '## 🚀 VoiceClone Deployment Complete\\n\\n';
+            summary += '### Deployment Status\\n';
+            summary += `- **Test Environment**: ${testDeploy === 'success' ? '✅ Success' : '❌ Failed'}\\n`;
+            summary += `- **Production Environment**: ${prodDeploy === 'success' ? '✅ Success' : '❌ Failed'}\\n`;
+            summary += `- **Smoke Tests**: ${smokeTests === 'success' ? '✅ Passed' : smokeTests === 'skipped' ? '⏭️ Skipped' : '❌ Failed'}\\n\\n`;
+            
+            if (testDeploy === 'success') {
+              summary += '### ✅ Test Environment Deployed\\n';
+              if (smokeTests === 'success') {
+                summary += 'CPU mock consumer is processing messages and system is healthy.\\n\\n';
+              } else {
+                summary += 'Run smoke tests manually to validate system health.\\n\\n';
+              }
+            }
+            
+            if (prodDeploy === 'success') {
+              summary += '### ✅ Production Environment Deployed\\n';
+              if (smokeTests === 'success') {
+                summary += 'GPU workers are scaled and ready for real traffic.\\n\\n';
+              } else {
+                summary += 'Run smoke tests manually to validate GPU workers and HLS output.\\n\\n';
+              }
+            }
+            
+            summary += '### 📋 Next Steps\\n';
+            summary += '1. Run smoke tests manually to validate deployments\\n';
+            summary += '2. Run GPU validation for comprehensive HLS testing\\n';
+            summary += '3. Monitor CloudWatch dashboards for system metrics\\n';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+

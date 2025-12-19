@@ -1,0 +1,23 @@
+# Already installed by install-python-deps.sh, but included for completeness
+torch>=2.0.0
+torchaudio>=2.0.0
+TTS>=0.22.0
+transformers>=4.30.0
+boto3>=1.28.0
+ffmpeg-python>=0.2.0
+numpy>=1.22.0
+scipy>=1.10.0
+librosa>=0.10.0
+soundfile>=0.12.0
+psutil>=5.9.0
+GPUtil>=1.4.0
+pydub==0.25.1
+webrtcvad==2.0.10
+aiohttp==3.11.2
+nltk==3.9.1
+pysbd==0.3.4
+num2words==0.5.13
+jieba==0.42.1
+pypinyin==0.53.0
+gruut[de,es,fr]==2.2.3
+prometheus-client==0.20.0

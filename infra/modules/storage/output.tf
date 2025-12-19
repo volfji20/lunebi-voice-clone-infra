@@ -17,3 +17,18 @@ output "stories_kms_key_arn" {
   description = "ARN of the KMS key used for S3 encryption"
   value       = aws_kms_key.stories_key.arn
 }
+
+output "stories_bucket_ssm_parameter" {
+  description = "SSM parameter name for stories bucket"
+  value       = aws_ssm_parameter.stories_bucket.name
+}
+
+output "stories_kms_key_ssm_parameter" {
+  description = "SSM parameter name for KMS key ID"
+  value       = aws_ssm_parameter.stories_kms_key_id.name
+}
+
+output "stories_bucket_arn_ssm_parameter" {
+  description = "SSM parameter name for bucket ARN"
+  value       = aws_ssm_parameter.stories_bucket_arn.name
+}

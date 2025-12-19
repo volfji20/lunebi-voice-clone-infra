@@ -134,19 +134,14 @@ resource "aws_vpc_endpoint" "dynamodb" {
   }
 }
 
-# SQS (Interface)
-resource "aws_security_group" "vpce_sg" {
-  name        = "${var.project}-${var.env}-vpce-sg"
+
+
+resource "aws_security_group" "gpu_worker" {
+  name        = "${var.project}-gpu-worker-sg"
+  description = "Security group for GPU worker instances"
   vpc_id      = aws_vpc.main.id
-  description = "Allow Lambda to talk to VPC endpoints"
 
-  ingress {
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.lambda.id]
-  }
-
+  # Only OUTBOUND rules needed - FREE
   egress {
     from_port   = 0
     to_port     = 0
@@ -155,48 +150,7 @@ resource "aws_security_group" "vpce_sg" {
   }
 
   tags = {
-    Name    = "${var.project}-${var.env}-vpce-sg"
-    Project = var.project
-    Env     = var.env
-  }
-}
-
-resource "aws_vpc_endpoint" "sqs" {
-  vpc_id             = aws_vpc.main.id
-  service_name       = "com.amazonaws.${var.region}.sqs"
-  vpc_endpoint_type  = "Interface"
-  subnet_ids         = [aws_subnet.private.id]
-  security_group_ids = [aws_security_group.vpce_sg.id]
-  private_dns_enabled = true
-
-  tags = {
-    Name    = "${var.project}-${var.env}-sqs-vpce"
-    Project = var.project
-    Env     = var.env
-  }
-}
-
-resource "aws_security_group" "lambda" {
-  name        = "${var.project}-${var.env}-lambda-sg"
-  description = "Lambda security group"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # or restrict to your IPs
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name    = "${var.project}-${var.env}-lambda-sg"
+    Name    = "${var.project}-${var.env}-gpu-worker-sg"
     Project = var.project
     Env     = var.env
   }

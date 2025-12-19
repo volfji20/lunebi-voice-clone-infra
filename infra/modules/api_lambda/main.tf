@@ -285,9 +285,10 @@ resource "aws_iam_role" "lambda_exec" {
   })
 }
 
+# ✅ CORRECT: This is for Lambda NOT in VPC
 resource "aws_iam_role_policy_attachment" "lambda_basic_exec" {
   role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 # Optional: Lambda Insights for metrics
@@ -408,7 +409,7 @@ resource "aws_lambda_function" "app" {
   source_code_hash = filebase64sha256("${path.module}/bootstrap.zip")
 
 
-  timeout     = 10      # 10s timeout
+  timeout     = 10     # 10s timeout
   memory_size = 512     # 512 MB memory
   ephemeral_storage {
     size = 512         # 512 MB ephemeral storage
@@ -443,11 +444,6 @@ resource "aws_lambda_function" "app" {
     }
   }
 
-  # Attach Lambda to VPC (private subnets + SG)
-  vpc_config {
-    subnet_ids         = var.private_subnets
-    security_group_ids = [var.lambda_sg_id]
-  }
 
   depends_on = [
     aws_iam_role_policy_attachment.lambda_basic_exec,
@@ -456,6 +452,9 @@ resource "aws_lambda_function" "app" {
     aws_cognito_user_pool.main,      
     aws_cognito_user_pool_client.api_client,
   ]
+    lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # -----------------------------

@@ -51,3 +51,41 @@ jwt_issuer   = "https://mock.lunebi.dev"
 
 long_poll_seconds     = 20
 max_receive_count     = 5
+
+
+
+# Cost Control Configuration
+
+
+# Environment Budget
+monthly_budget_usd          = 500
+alert_emails                = ["devops@lunebi.com", "alerts@lunebi.com"]
+enable_cost_optimization    = true
+
+# Test Mode Configuration
+mode                    = "test"
+enable_cpu_mock_consumer = true
+enable_gpu_workers      = true
+gpu_asg_min             = 0
+gpu_asg_desired         = 0
+gpu_asg_max             = 2
+gpu_use_spot_only       = true
+gpu_enable_warm_pool    = false
+
+# Cost Control & Budgeting
+cost_guardrails_enabled     = true
+max_monthly_gpu_budget      = 1000
+budget_alert_email          = "alerts@lunebi.com"
+
+# Test Mode - Strict Cost Controls
+test_mode_max_instances     = 2
+test_mode_manual_scaling_desired = 0
+
+# Production Mode - Balanced Cost/Performance  
+prod_mode_max_gpu_instances = 10
+prod_mode_min_gpu_instances = 1
+prod_mode_desired_gpu_instances = 2
+
+spot_fallback_enabled = true
+
+stories_table_name = "lunebi-prod-us-east-1-stories"

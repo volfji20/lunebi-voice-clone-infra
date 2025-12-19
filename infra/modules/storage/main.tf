@@ -234,4 +234,30 @@ resource "aws_iam_role_policy" "app_access" {
   ]
 }
 
+# SSM Parameter for stories bucket name
+resource "aws_ssm_parameter" "stories_bucket" {
+  name  = "/${local.prefix}/stories_bucket"
+  type  = "String"
+  value = aws_s3_bucket.stories.bucket
+
+}
+
+# SSM Parameter for KMS key ID
+resource "aws_ssm_parameter" "stories_kms_key_id" {
+  name  = "/${local.prefix}/stories_kms_key_id"
+  type  = "String"
+  value = aws_kms_key.stories_key.arn
+
+}
+
+# SSM Parameter for bucket ARN
+resource "aws_ssm_parameter" "stories_bucket_arn" {
+  name  = "/${local.prefix}/stories_bucket_arn"
+  type  = "String"
+  value = aws_s3_bucket.stories.arn
+  
+}
+
+
+
 

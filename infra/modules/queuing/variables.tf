@@ -73,3 +73,33 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "autoscaling_policy_arns" {
+  description = "ARNs of autoscaling policies for alarm actions"
+  type        = list(string)
+  default     = []
+}
+
+variable "test_mode_alert_arns" {
+  description = "ARNs for test mode alert notifications"
+  type        = list(string)
+  default     = []
+}
+
+variable "spot_fallback_enabled" {
+  description = "Enable Spot instance fallback in test mode"
+  type        = bool
+  default     = true
+}
+
+variable "api_gateway_id" {
+  description = "APi Gateway Id"
+  default = ""
+}
+
+variable "gpu_asg_name" {
+  description = "Gpu ASG name"
+  type = string
+  default = ""
+  
+}

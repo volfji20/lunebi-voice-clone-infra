@@ -62,3 +62,19 @@ output "dynamodb_dashboard_url" {
   description = "URL of the DynamoDB CloudWatch dashboard"
   value       = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards:name=${aws_cloudwatch_dashboard.dynamodb_metrics.dashboard_name}"
 }
+
+# SSM parameter outputs
+output "stories_table_ssm_parameter" {
+  description = "SSM parameter name for stories table"
+  value       = aws_ssm_parameter.stories_table.name
+}
+
+output "voices_table_ssm_parameter" {
+  description = "SSM parameter name for voices table"
+  value       = aws_ssm_parameter.voices_table.name
+}
+
+output "dynamodb_kms_key_ssm_parameter" {
+  description = "SSM parameter name for DynamoDB KMS key"
+  value       = aws_ssm_parameter.dynamodb_kms_key_arn.name
+}

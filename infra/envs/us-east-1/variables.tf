@@ -168,3 +168,186 @@ variable "alarm_email" {
   type        = string
   default     = null
 }
+
+# Environment-specific cost controls
+variable "monthly_budget_usd" {
+  type        = number
+  description = "Monthly budget for US-East-1 environment"
+  default     = 500
+}
+
+variable "alert_emails" {
+  type        = list(string)
+  description = "List of email addresses for budget and cost alerts"
+  default     = ["devops@lunebi.com", "alerts@lunebi.com"]
+}
+
+variable "enable_cost_optimization" {
+  type        = bool
+  description = "Enable all cost optimization features"
+  default     = true
+}
+
+
+variable "enable_gpu_workers" {
+  description = "Enable GPU worker fleet"
+  type        = bool
+  default     = true
+}
+
+
+# GPU Fleet Toggles
+variable "gpu_asg_min" {
+  description = "GPU ASG minimum instances"
+  type        = number
+  default     = 0
+}
+
+variable "gpu_asg_desired" {
+  description = "GPU ASG desired instances"
+  type        = number
+  default     = 0
+}
+
+variable "gpu_asg_max" {
+  description = "GPU ASG maximum instances"
+  type        = number
+  default     = 2
+}
+
+variable "gpu_use_spot_only" {
+  description = "Use Spot instances only"
+  type        = bool
+  default     = true
+}
+
+variable "gpu_enable_warm_pool" {
+  description = "Enable warm pool"
+  type        = bool
+  default     = false
+}
+
+# ============================================================================
+# COST CONTROL & BUDGETING VARIABLES
+# ============================================================================
+
+variable "cost_guardrails_enabled" {
+  description = "Enable strict cost control guardrails and budget alarms"
+  type        = bool
+  default     = true
+}
+
+variable "max_monthly_gpu_budget" {
+  description = "Maximum monthly GPU cost budget in USD"
+  type        = number
+  default     = 1000
+  
+  validation {
+    condition     = var.max_monthly_gpu_budget >= 100
+    error_message = "Budget must be at least $100 to allow for basic operation."
+  }
+}
+
+variable "budget_alert_email" {
+  description = "Email address to receive budget alerts"
+  type        = string
+  default     = "alerts@lunebi.com"
+  
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.budget_alert_email))
+    error_message = "Must be a valid email address."
+  }
+}
+
+# ============================================================================
+# TEST MODE COST CONTROLS
+# ============================================================================
+
+variable "test_mode_max_instances" {
+  description = "Maximum GPU instances allowed in test mode (strict cost control)"
+  type        = number
+  default     = 2
+  
+  validation {
+    condition     = var.test_mode_max_instances >= 0 && var.test_mode_max_instances <= 2
+    error_message = "Test mode cannot exceed 2 instances for cost safety."
+  }
+}
+
+variable "test_mode_manual_scaling_desired" {
+  description = "Desired instances in test mode (must be 0 for cost savings)"
+  type        = number
+  default     = 0
+  
+  validation {
+    condition     = var.test_mode_manual_scaling_desired == 0
+    error_message = "Test mode must have desired=0 to prevent idle GPU costs."
+  }
+}
+
+# ============================================================================
+# PRODUCTION MODE COST CONTROLS
+# ============================================================================
+
+variable "prod_mode_max_gpu_instances" {
+  description = "Maximum GPU instances allowed in production mode"
+  type        = number
+  default     = 10
+  
+  validation {
+    condition     = var.prod_mode_max_gpu_instances >= 1 && var.prod_mode_max_gpu_instances <= 50
+    error_message = "Production mode must have between 1 and 50 instances."
+  }
+}
+
+variable "prod_mode_min_gpu_instances" {
+  description = "Minimum GPU instances in production mode"
+  type        = number
+  default     = 1
+  
+  validation {
+    condition     = var.prod_mode_min_gpu_instances >= 0
+    error_message = "Minimum instances cannot be negative."
+  }
+}
+
+variable "prod_mode_desired_gpu_instances" {
+  description = "Desired GPU instances in production mode"
+  type        = number
+  default     = 2
+  
+  validation {
+    condition     = var.prod_mode_desired_gpu_instances >= var.prod_mode_min_gpu_instances && var.prod_mode_desired_gpu_instances <= var.prod_mode_max_gpu_instances
+    error_message = "Desired instances must be between min and max."
+  }
+}
+
+# ============================================================================
+# SPOT INSTANCE CONFIGURATION
+# ============================================================================
+
+variable "spot_fallback_enabled" {
+  description = "Enable Spot instance fallback in test mode"
+  type        = bool
+  default     = true
+}
+
+# GPU Worker AMI ID (from Packer build)
+variable "gpu_worker_ami_id" {
+  description = "AMI ID for GPU workers built by Packer"
+  type        = string
+  default     = ""
+}
+
+# GPU Worker Version
+variable "gpu_worker_version" {
+  description = "Version tag for GPU workers"
+  type        = string
+  default     = "1.0.0"
+}
+
+variable "stories_table_name" {
+  description = "stories_table_name"
+  type = string
+  
+}
