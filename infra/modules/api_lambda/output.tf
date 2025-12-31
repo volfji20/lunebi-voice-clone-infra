@@ -40,3 +40,8 @@ output "lambda_function_arn" {
   description = "ARN of the Lambda function"
   value       = aws_lambda_function.app.arn
 }
+
+output "api_lambda_role_arn" {
+  description = "ARN of the API Lambda execution role"
+  value       = aws_iam_role.lambda_exec.arn
+}

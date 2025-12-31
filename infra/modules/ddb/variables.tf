@@ -58,3 +58,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "api_lambda_role_arn" {
+  
+}
+variable "cpu_mock_role_arn" {
+  
+}

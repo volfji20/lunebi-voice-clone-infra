@@ -82,6 +82,7 @@ module "network" {
   public_subnet_cidr       = "10.0.1.0/24"
   private_subnet_cidr      = "10.0.2.0/24"
   availability_zone        = "${var.region}a" 
+
 }
 
 # -----------------------------
@@ -146,6 +147,8 @@ module "ddb" {
   sqs_queue_arn    = module.queuing.queue_arn
   stories_bucket_arn = module.storage.stories_bucket_arn
   enable_cpu_mock  = var.enable_cpu_mock_consumer
+  api_lambda_role_arn = module.api_lambda.api_lambda_role_arn
+  cpu_mock_role_arn = module.ddb.cpu_mock_role_arn
 
   tags = {
     Project     = var.project

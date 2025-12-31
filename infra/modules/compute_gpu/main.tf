@@ -213,7 +213,9 @@ resource "aws_autoscaling_group" "gpu_workers" {
  
   # ✅ USE ONLY mixed_instances_policy (it already contains the launch template reference)
   mixed_instances_policy {
+    
     launch_template {
+      
       launch_template_specification {
         launch_template_id = aws_launch_template.gpu_worker[0].id
         version            = "$Latest"
@@ -222,10 +224,6 @@ resource "aws_autoscaling_group" "gpu_workers" {
       override {
         instance_type     = "g6.xlarge"     # Preferred: L4 GPU
         weighted_capacity = "1"
-      }
-      override {
-        instance_type     = "g6.2xlarge"    # More L4 memory
-        weighted_capacity = "2"
       }
       override {
         instance_type     = "g5.xlarge"     # Fallback: A10G GPU

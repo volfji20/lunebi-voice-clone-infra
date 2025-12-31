@@ -155,3 +155,149 @@ resource "aws_security_group" "gpu_worker" {
     Env     = var.env
   }
 }
+
+# ssm_endpoints.tf
+# SSM VPC Endpoints for Private Subnet Access
+
+# -----------------------------
+# Security Group for VPC Endpoints
+# -----------------------------
+resource "aws_security_group" "vpc_endpoint" {
+  name        = "${var.project}-${var.env}-vpc-endpoint-sg"
+  description = "Security group for VPC endpoints (SSM, EC2, Logs)"
+  vpc_id      = aws_vpc.main.id
+
+  # Inbound HTTPS from private subnet only
+  ingress {
+    description = "HTTPS from private subnet"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [aws_subnet.private.cidr_block]  # Restrict to private subnet
+  }
+
+  # Allow responses back
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "${var.project}-${var.env}-vpc-endpoint-sg"
+    Project = var.project
+    Env     = var.env
+    Cost    = "Optimized"
+  }
+}
+
+# -----------------------------
+# ESSENTIAL SSM Endpoints (Required for Session Manager)
+# -----------------------------
+# 1. SSM Endpoint (core service) - $7.29/month
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private.id]  # Creates 1 ENI
+  private_dns_enabled = true
+  
+  security_group_ids = [
+    aws_security_group.vpc_endpoint.id
+  ]
+
+  tags = {
+    Name    = "${var.project}-${var.env}-ssm-vpce"
+    Project = var.project
+    Env     = var.env
+    Type    = "Interface"
+    Cost    = "$7.29/month"
+  }
+}
+
+# 2. SSM Messages Endpoint (required) - $7.29/month
+resource "aws_vpc_endpoint" "ssm_messages" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.ssmmessages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private.id]  # Creates 1 ENI
+  private_dns_enabled = true
+  
+  security_group_ids = [
+    aws_security_group.vpc_endpoint.id
+  ]
+
+  tags = {
+    Name    = "${var.project}-${var.env}-ssm-messages-vpce"
+    Project = var.project
+    Env     = var.env
+    Type    = "Interface"
+    Cost    = "$7.29/month"
+  }
+}
+
+# 3. EC2 Messages Endpoint (required) - $7.29/month
+resource "aws_vpc_endpoint" "ec2_messages" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.ec2messages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private.id]  # Creates 1 ENI
+  private_dns_enabled = true
+  
+  security_group_ids = [
+    aws_security_group.vpc_endpoint.id
+  ]
+
+  tags = {
+    Name    = "${var.project}-${var.env}-ec2-messages-vpce"
+    Project = var.project
+    Env     = var.env
+    Type    = "Interface"
+    Cost    = "$7.29/month"
+  }
+}
+
+# -----------------------------
+# OPTIONAL: CloudWatch Logs Endpoint
+# -----------------------------
+# Uncomment if using CloudWatch agent for logs
+# resource "aws_vpc_endpoint" "logs" {
+#   vpc_id              = aws_vpc.main.id
+#   service_name        = "com.amazonaws.${var.region}.logs"
+#   vpc_endpoint_type   = "Interface"
+#   subnet_ids          = [aws_subnet.private.id]
+#   private_dns_enabled = true
+#   
+#   security_group_ids = [
+#     aws_security_group.vpc_endpoint.id
+#   ]
+#
+#   tags = {
+#     Name    = "${var.project}-${var.env}-logs-vpce"
+#     Project = var.project
+#     Env     = var.env
+#     Type    = "Optional"
+#     Cost    = "$7.29/month"
+#   }
+# }
+
+
+# SQS VPC Endpoint
+resource "aws_vpc_endpoint" "sqs" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.sqs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private.id]
+  private_dns_enabled = true
+  
+  security_group_ids = [
+    aws_security_group.vpc_endpoint.id
+  ]
+
+  tags = {
+    Name    = "${var.project}-${var.env}-sqs-vpce"
+    Project = var.project
+    Env     = var.env
+  }
+}

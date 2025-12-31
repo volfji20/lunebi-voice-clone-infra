@@ -17,19 +17,57 @@ resource "aws_kms_key" "dynamodb" {
         }
         Action   = "kms:*"
         Resource = "*"
+      },
+      {
+        Sid    = "Allow GPU Worker Role"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.gpu_worker.arn
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:Encrypt",
+          "kms:GenerateDataKey",
+          "kms:GenerateDataKeyWithoutPlaintext",
+          "kms:ReEncrypt*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow Lambda Roles"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            var.api_lambda_role_arn,
+            var.cpu_mock_role_arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:Encrypt",
+          "kms:GenerateDataKey",
+          "kms:GenerateDataKeyWithoutPlaintext",
+          "kms:ReEncrypt*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "dynamodb.${var.region}.amazonaws.com"
+          }
+        }
       }
     ]
   })
 
   tags = var.tags
 }
-
 data "aws_caller_identity" "current" {}
 
 locals {
-  kms_key_arn = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.dynamodb[0].arn
+  kms_key_arn = "arn:aws:kms:us-east-1:${data.aws_caller_identity.current.account_id}:key/65420a1b-5c61-4e54-b5ba-5541f8ec1fe9"
 }
-
 # voices table - No TTL, deletion via /voices/delete only
 resource "aws_dynamodb_table" "voices" {
   name         = "${var.prefix}-voices"
@@ -55,6 +93,11 @@ resource "aws_dynamodb_table" "voices" {
   tags = merge(var.tags, {
     Purpose = "VoiceClone-Voices-Table"
   })
+
+  ttl {
+  attribute_name = "expire_at"  # Terraform says "expire_at"
+  enabled        = true
+}
 
   # Explicitly NO TTL configured (as per blueprint)
 }
@@ -126,7 +169,10 @@ resource "aws_iam_role_policy" "gpu_worker" {
         Action = [
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
-          "sqs:ChangeMessageVisibility"
+          "sqs:ChangeMessageVisibility",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:SendMessage" 
         ]
         Resource = [var.sqs_queue_arn]
       },
@@ -135,36 +181,82 @@ resource "aws_iam_role_policy" "gpu_worker" {
         Sid    = "DynamoDBVoicesRead"
         Effect = "Allow"
         Action = [
-          "dynamodb:GetItem"
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:DescribeTable"
         ]
-        Resource = [aws_dynamodb_table.voices.arn]
+        Resource = [
+          aws_dynamodb_table.voices.arn,
+          "${aws_dynamodb_table.voices.arn}/index/*"
+        ]
       },
       {
         Sid    = "DynamoDBStoriesUpdate"
         Effect = "Allow"
         Action = [
-          "dynamodb:UpdateItem"
+          "dynamodb:UpdateItem",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DescribeTable"
         ]
         Resource = [aws_dynamodb_table.stories.arn]
       },
-      # S3: PutObject to stories/${story_id}/* only
+      # S3: PutObject to stories/${story_id}/* only (with SSE-KMS)
       {
         Sid    = "S3StorySegmentsWrite"
         Effect = "Allow"
         Action = [
-          "s3:PutObject"
+          "s3:GetObject",       # ✅ ADDED
+          "s3:HeadObject",      # ✅ ADDED - FIX FOR 403 ERROR
+          "s3:DeleteObject", 
+          "s3:PutObject",
+          "s3:PutObjectAcl"
         ]
         Resource = ["${var.stories_bucket_arn}/stories/*"]
       },
-      # KMS: Encrypt/Decrypt for DynamoDB and S3
+      # S3: Need GetBucketLocation for region detection
+      {
+        Sid    = "S3BucketInfo"
+        Effect = "Allow"
+        Action = [
+          "s3:GetBucketLocation",
+          "s3:ListBucket"
+        ]
+        Resource = [var.stories_bucket_arn]
+      },
+      # KMS: Full permissions for the specific KMS key
       {
         Sid    = "KMSAccess"
         Effect = "Allow"
         Action = [
           "kms:Decrypt",
-          "kms:GenerateDataKey"
+          "kms:Encrypt",
+          "kms:GenerateDataKey",
+          "kms:GenerateDataKeyWithoutPlaintext",
+          "kms:ReEncrypt*",
+          "kms:DescribeKey"
         ]
         Resource = [local.kms_key_arn]
+      },
+      # KMS: Also need to allow these for key policy to work
+      {
+        Sid    = "KMSKeyAlias"
+        Effect = "Allow"
+        Action = [
+          "kms:ListAliases",
+          "kms:ListKeys"
+        ]
+        Resource = ["*"]
+      },
+      {
+        Sid = "DynamoDBVoicesScan",
+        Effect = "Allow",
+        Action = [
+          "dynamodb:Scan"
+        ],
+        Resource= [
+          "*"
+        ]
       },
       # CloudWatch Logs for monitoring
       {
@@ -177,6 +269,58 @@ resource "aws_iam_role_policy" "gpu_worker" {
           "logs:DescribeLogStreams"
         ]
         Resource = ["arn:aws:logs:*:*:*"]
+      },
+      # EC2 Instance Metadata (for IMDSv2)
+      {
+        Sid    = "EC2InstanceMetadata"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeTags"
+        ]
+        Resource = ["*"]
+      },
+      # SSM: Required for Session Manager, parameter store, etc.
+      {
+        Sid    = "SSMAccess"
+        Effect = "Allow"
+        Action = [
+          "ssm:DescribeParameters",
+          "ssm:GetParameters",
+          "ssm:GetParameter",
+          "ssm:PutParameter",
+          "ssm:DeleteParameter",
+          "ssm:GetParametersByPath",
+          "ssm:DescribeInstanceInformation",
+          "ssm:CreateAssociation",
+          "ssm:UpdateAssociation",
+          "ssm:UpdateInstanceAssociationStatus",
+          "ssm:ListAssociations",
+          "ssm:ListInstanceAssociations",
+          "ssm:DescribeAssociation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel",
+          "ssm-guiconnect:*",
+          "ec2messages:AcknowledgeMessage",
+          "ec2messages:DeleteMessage",
+          "ec2messages:FailMessage",
+          "ec2messages:GetEndpoint",
+          "ec2messages:GetMessages",
+          "ec2messages:SendReply"
+        ]
+        Resource = ["*"]
+      },
+      # S3: For SSM documents and logs
+      {
+        Sid    = "SSMS3Access"
+        Effect = "Allow"
+        Action = [
+          "s3:GetEncryptionConfiguration",
+          "s3:PutEncryptionConfiguration"
+        ]
+        Resource = ["arn:aws:s3:::amazon-ssm-*", "arn:aws:s3:::aws-ssm-*"]
       }
     ]
   })
@@ -396,22 +540,22 @@ resource "aws_iam_role_policy_attachment" "ssm_managed" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "s3_full" {
-  role       = aws_iam_role.gpu_worker.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-}
+# resource "aws_iam_role_policy_attachment" "s3_full" {
+#   role       = aws_iam_role.gpu_worker.name
+#   policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+# }
 
 resource "aws_iam_role_policy_attachment" "sqs_full" {
   role       = aws_iam_role.gpu_worker.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
 }
 
-resource "aws_iam_role_policy_attachment" "dynamodb_full" {
-  role       = aws_iam_role.gpu_worker.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
-}
+# resource "aws_iam_role_policy_attachment" "dynamodb_full" {
+#   role       = aws_iam_role.gpu_worker.name
+#   policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+# }
 
-resource "aws_iam_role_policy_attachment" "cloudwatch_logs" {
-  role       = aws_iam_role.gpu_worker.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
-}
+# resource "aws_iam_role_policy_attachment" "cloudwatch_logs" {
+#   role       = aws_iam_role.gpu_worker.name
+#   policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+# }
